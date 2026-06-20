@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Mind Map</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+
+    <header id="toolbar">
+      <div class="toolbar-left">
+        <span class="logo">🧠 Mind&nbsp;Map</span>
+      </div>
+      <div class="toolbar-right">
+        <button id="btn-add" class="tbtn" title="Add a new idea">+ New idea</button>
+        <button id="btn-save" class="tbtn" title="Download your map as a file">💾 Save file</button>
+        <button id="btn-open" class="tbtn" title="Open a previously saved map">📂 Open file</button>
+        <input type="file" id="file-input" accept="application/json" hidden />
+        <button id="btn-export" class="tbtn" title="Export the visible map as an image">🖼 Export image</button>
+        <button id="btn-reset-view" class="tbtn" title="Re-center the view">⤾ Reset view</button>
+        <button id="btn-clear" class="tbtn danger" title="Erase everything and start over">🧹 Clear all</button>
+      </div>
+    </header>
+
+    <main id="viewport">
+      <div id="canvas">
+        <svg id="edges-layer"></svg>
+        <div id="nodes-layer"></div>
+      </div>
+    </main>
+
+    <div id="hint">Double-click empty space for a new idea · Double-click a note to branch off it · Select a note, then 🔗 to link it to another</div>
+    <div id="zoom-control">
+      <input type="range" id="zoom-slider" min="25" max="250" step="5" value="100" title="Zoom" />
+      <span id="zoom-indicator">100%</span>
+    </div>
+
+    <!-- Floating toolbar that appears above a selected note -->
+    <div id="node-toolbar" class="floating-toolbar hidden">
+      <button class="color-dot" data-color="#fff3b0" style="background:#fff3b0" title="Cream"></button>
+      <button class="color-dot" data-color="#bdf3c8" style="background:#bdf3c8" title="Mint"></button>
+      <button class="color-dot" data-color="#bfe3ff" style="background:#bfe3ff" title="Sky"></button>
+      <button class="color-dot" data-color="#ffc6c6" style="background:#ffc6c6" title="Coral"></button>
+      <button class="color-dot" data-color="#e3c6ff" style="background:#e3c6ff" title="Lavender"></button>
+      <button class="color-dot" data-color="#ffd9ad" style="background:#ffd9ad" title="Amber"></button>
+      <span class="ntb-divider"></span>
+      <button id="ntb-edit" class="ntb-btn" title="Rename">✏️</button>
+      <button id="ntb-link" class="ntb-btn" title="Link to another note">🔗</button>
+      <button id="ntb-delete" class="ntb-btn" title="Delete note">🗑</button>
+    </div>
+
+  </div>
+
+  <!-- Used only for the "Export image" button -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
