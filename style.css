@@ -84,6 +84,7 @@ html, body {
   overflow: hidden;
   background: var(--bg-viewport);
   cursor: grab;
+  touch-action: none;
 }
 #viewport.panning { cursor: grabbing; }
 #app.linking #viewport { cursor: crosshair; }
@@ -156,6 +157,8 @@ html, body {
   align-items: center;
   justify-content: center;
   text-align: center;
+  touch-action: none;
+  -webkit-touch-callout: none;
 }
 .node:active { cursor: grabbing; }
 
@@ -301,4 +304,14 @@ html, body {
   #hint { display: none; }
   .logo { font-size: 14px; }
   .tbtn { padding: 6px 9px; font-size: 12px; }
+}
+
+/* ---------- Touch-primary devices (phones, tablets) ---------- */
+
+@media (pointer: coarse) {
+  .tbtn { padding: 9px 13px; font-size: 13.5px; }
+  .color-dot { width: 26px; height: 26px; }
+  .ntb-btn { font-size: 18px; padding: 6px 9px; }
+  .floating-toolbar { gap: 8px; padding: 8px 10px; }
+  #zoom-slider { width: 90px; }
 }
