@@ -47,19 +47,31 @@ Then visit `http://localhost:8000` in your browser.
 
 ## How to use it
 
-- **Double-click empty space** → create a new idea, ready to type into immediately.
-- **Double-click an existing note** → create a new note already connected to it
-  (great for branching out a topic).
-- **Drag a note** → move it anywhere.
-- **Click a note, then the ✏️ button** → rename it.
-- **Click a note, then 🔗** → enters link mode; click any other note to draw a
-  connection between them (works for any two notes, not just parent → child).
-- **Click a color dot** on the floating toolbar → tag the selected note with a color.
-- **Click directly on a connecting line** → removes that connection.
+Works the same on a laptop, a tablet, or a phone — mouse, trackpad, and touch
+all drive the same canvas.
+
+- **Tap/click empty space twice quickly** → create a new idea, ready to type
+  into immediately.
+- **Tap/click an existing note twice quickly** → create a new note already connected
+  to it (great for branching out a topic).
+- **Drag a note** (mouse, finger, or pen) → move it anywhere.
+- **Click/tap a note, then the ✏️ button** → rename it.
+- **Click/tap a note, then 🔗** → enters link mode; tap any other note to draw
+  a connection between them (works for any two notes, not just parent → child).
+- **Tap a color dot** on the floating toolbar → tag the selected note with a color.
+- **Click/tap directly on a connecting line** → removes that connection.
 - **Select a note and press Delete/Backspace** (or use 🗑) → deletes it and any
   connections attached to it.
-- **Scroll wheel** → zoom in/out. **Drag empty space** → pan around. **"⤾ Reset view"**
-  → re-center on your map.
+
+**Panning and zooming:**
+
+| Input | Pan the map | Zoom |
+|---|---|---|
+| **Scroll wheel** (mouse) | — | Scroll up/down |
+| **Trackpad** | Two-finger swipe (any direction) | Pinch in/out |
+| **Touch** (phone/tablet) | One-finger drag on empty space | Two-finger pinch |
+
+"⤾ Reset view" re-centers on your whole map at any time.
 
 ## File structure
 
@@ -74,6 +86,23 @@ mind-map-app/
 Everything is plain JavaScript — no npm install, no React, no bundler. You can
 open `script.js` directly in VS Code and edit it; refresh the browser to see
 your changes.
+
+## Using it from your phone or tablet too
+
+The interface itself now works on touch the same as on a laptop. To actually
+*open* it from a phone or tablet, that device needs to reach whichever
+computer is running the server (Option B or C above):
+
+1. Find your laptop's local network IP (on Windows: `ipconfig`, look for
+   IPv4 Address; on Mac: `ifconfig` or System Settings → Wi-Fi → Details).
+2. Make sure the phone/tablet is on the **same Wi-Fi network** as the laptop.
+3. On the phone/tablet, visit `http://<that-ip>:<port>` — e.g.
+   `http://192.168.1.42:5500` for Live Server, or `:8000` for the Python server.
+
+One thing worth knowing: autosave uses each browser's own local storage, so a
+phone visiting this way has its **own separate map**, not the same one as the
+laptop. To move a map between devices, use **"💾 Save file"** on one and
+**"📂 Open file"** on the other.
 
 ## Putting it online (optional, later)
 
