@@ -502,25 +502,28 @@ function startPinch() {
 function onWheel(e) {
   e.preventDefault();
   
-  // Trackpad two-finger swipe has BOTH deltaX and deltaY.
-  // Regular scroll wheel has only deltaY. This is the clearest way to distinguish.
-  if (Math.abs(e.deltaX) > 0) {
-    // Trackpad swipe (horizontal + vertical) — pan the map
-    panX -= e.deltaX;
-    panY -= e.deltaY;
-  } else {
-    // Regular scroll wheel (only vertical) — zoom
+  // Modern browsers set e.ctrlKey to true for trackpad pinch-to-zoom gestures
+  if (e.ctrlKey) {
+    // Zooming (Trackpad pinch-in / pinch-out)
     const rect = viewportEl.getBoundingClientRect();
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
     const contentX = (mouseX - panX) / zoom;
     const contentY = (mouseY - panY) / zoom;
-    const rawFactor = Math.exp(-e.deltaY * 0.0008);
-    const factor = Math.max(0.92, Math.min(1.08, rawFactor));
+    
+    // Increased the multiplier from 0.0008 to 0.01 for faster, more responsive trackpad zoom
+    const rawFactor = Math.exp(-e.deltaY * 0.01);
+    const factor = Math.max(0.85, Math.min(1.15, rawFactor));
     const newZoom = Math.min(2.5, Math.max(0.25, zoom * factor));
+    
     panX = mouseX - contentX * newZoom;
     panY = mouseY - contentY * newZoom;
     zoom = newZoom;
+  } else {
+    // Panning (Trackpad two-finger swipe in ANY direction)
+    // Both deltaX and deltaY are handled uniformly here to prevent accidental zooming
+    panX -= e.deltaX;
+    panY -= e.deltaY;
   }
   
   applyTransform();
