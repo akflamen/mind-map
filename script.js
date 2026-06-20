@@ -8,7 +8,7 @@
 const STORAGE_KEY   = 'mindmap_data_v1';
 const CANVAS_SIZE    = 6000;          // virtual canvas is 6000x6000px
 const DEFAULT_COLOR  = '#fff3b0';
-const DEFAULT_HINT   = 'Double-click empty space for a new idea · Double-click a note to branch off it · Select a note, then 🔗 to link it to another';
+const DEFAULT_HINT   = 'Scroll to zoom · Drag empty space or two-finger swipe to pan · Double-tap/click a note to branch · Tap a note then 🔗 to link';
 
 /* ---------- App state ---------- */
 let nodes = [];              // [{ id, x, y, text, color }]
@@ -21,8 +21,15 @@ let linkSourceId = null;
 
 let panX = 0, panY = 0, zoom = 1;
 
-let isPanning = false, panStartX = 0, panStartY = 0, panOrigX = 0, panOrigY = 0;
-let isDraggingNode = false, dragNodeId = null, dragStartX = 0, dragStartY = 0, dragOrigX = 0, dragOrigY = 0;
+// Pointer-based gesture state (covers mouse, touch, and pen uniformly)
+let activePointers = new Map();   // pointerId -> { x, y }
+let gestureMode = null;           // null | 'pan' | 'node' | 'pinch'
+let dragNodeId = null;
+let dragStartX = 0, dragStartY = 0, dragOrigX = 0, dragOrigY = 0;
+let panStartX = 0, panStartY = 0, panOrigX = 0, panOrigY = 0;
+let pinchStartDist = 0, pinchStartZoom = 1;
+let pinchAnchorContentX = 0, pinchAnchorContentY = 0;
+let lastTapTime = 0, lastTapTargetId = null; // manual double-tap/double-click detection
 
 let saveTimer = null;
 
@@ -343,7 +350,7 @@ function finishEditing(id, textEl) {
 function enterLinkMode(id) {
   linkSourceId = id;
   appEl.classList.add('linking');
-  hintEl.textContent = 'Click another note to connect it — press Esc to cancel.';
+  hintEl.textContent = 'Tap or click another note to connect it — press Esc to cancel.';
   const el = nodeElements[id];
   if (el) el.classList.add('link-source');
 }
@@ -363,37 +370,32 @@ function exitLinkMode() {
    ============================================================ */
 
 function attachNodeEvents(el, node, textEl) {
-  el.addEventListener('mousedown', (e) => {
-    if (textEl.isContentEditable) return; // let normal text editing happen
+  el.addEventListener('pointerdown', (e) => {
+    if (textEl.isContentEditable) return; // let normal text editing/cursor placement happen
     e.stopPropagation();
+    activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (activePointers.size >= 2) {
+      startPinch();
+      return;
+    }
 
     if (linkSourceId) {
       e.preventDefault();
       if (node.id !== linkSourceId) addEdge(linkSourceId, node.id);
       exitLinkMode();
+      activePointers.delete(e.pointerId);
       return;
     }
 
     selectNode(node.id);
-    isDraggingNode = true;
+    gestureMode = 'node';
     dragNodeId = node.id;
     dragStartX = e.clientX;
     dragStartY = e.clientY;
     dragOrigX = node.x;
     dragOrigY = node.y;
     e.preventDefault();
-  });
-
-  el.addEventListener('dblclick', (e) => {
-    if (textEl.isContentEditable) return;
-    e.stopPropagation();
-    if (linkSourceId) return;
-
-    const childCount = edges.filter((ed) => ed.from === node.id).length;
-    const child = createNode(node.x + 260, node.y + childCount * 90 - 40, '');
-    addEdge(node.id, child.id);
-    selectNode(child.id);
-    enterEditMode(child.id);
   });
 
   textEl.addEventListener('blur', () => finishEditing(node.id, textEl));
@@ -403,6 +405,28 @@ function attachNodeEvents(el, node, textEl) {
       textEl.blur();
     }
   });
+}
+
+// A tap (mouse click or touch tap) that barely moved finishes here. A second
+// one landing on the same note within 250ms counts as a "double" and branches
+// off a new connected note — this is the touch equivalent of double-click.
+function handleNodeTap(nodeId) {
+  const now = Date.now();
+  if (lastTapTargetId === nodeId && now - lastTapTime < 250) {
+    const node = nodes.find((n) => n.id === nodeId);
+    if (node) {
+      const childCount = edges.filter((ed) => ed.from === node.id).length;
+      const child = createNode(node.x + 260, node.y + childCount * 90 - 40, '');
+      addEdge(node.id, child.id);
+      selectNode(child.id);
+      enterEditMode(child.id);
+    }
+    lastTapTime = 0;
+    lastTapTargetId = null;
+  } else {
+    lastTapTime = now;
+    lastTapTargetId = nodeId;
+  }
 }
 
 /* ============================================================
@@ -419,13 +443,22 @@ function contentPointFromEvent(e) {
   };
 }
 
-function onBackgroundMouseDown(e) {
-  if (linkSourceId) {
-    exitLinkMode();
+function onBackgroundPointerDown(e) {
+  activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+  if (activePointers.size >= 2) {
+    startPinch();
     return;
   }
+
+  if (linkSourceId) {
+    exitLinkMode();
+    activePointers.delete(e.pointerId);
+    return;
+  }
+
   selectNode(null);
-  isPanning = true;
+  gestureMode = 'pan';
   panStartX = e.clientX;
   panStartY = e.clientY;
   panOrigX = panX;
@@ -433,29 +466,63 @@ function onBackgroundMouseDown(e) {
   viewportEl.classList.add('panning');
 }
 
-function onBackgroundDblClick(e) {
-  if (e.target !== canvasEl && e.target !== viewportEl) return;
-  const p = contentPointFromEvent(e);
-  const node = createNode(p.x - 70, p.y - 24, '');
-  selectNode(node.id);
-  enterEditMode(node.id);
+// A tap on empty space that barely moved finishes here. A second one inside
+// 250ms drops a brand-new note right where you tapped.
+function handleBackgroundTap(e) {
+  const now = Date.now();
+  if (lastTapTargetId === 'background' && now - lastTapTime < 250) {
+    const p = contentPointFromEvent(e);
+    const node = createNode(p.x - 70, p.y - 24, '');
+    selectNode(node.id);
+    enterEditMode(node.id);
+    lastTapTime = 0;
+    lastTapTargetId = null;
+  } else {
+    lastTapTime = now;
+    lastTapTargetId = 'background';
+  }
+}
+
+// Two pointers down (real multi-touch — a mouse never reports this) means a
+// pinch. We record the starting distance, zoom, and the content point under
+// the midpoint of the two fingers so that point stays fixed as you pinch.
+function startPinch() {
+  gestureMode = 'pinch';
+  viewportEl.classList.remove('panning');
+  const [p1, p2] = Array.from(activePointers.values());
+  pinchStartDist = Math.hypot(p2.x - p1.x, p2.y - p1.y) || 1;
+  pinchStartZoom = zoom;
+  const rect = viewportEl.getBoundingClientRect();
+  const midX = (p1.x + p2.x) / 2 - rect.left;
+  const midY = (p1.y + p2.y) / 2 - rect.top;
+  pinchAnchorContentX = (midX - panX) / zoom;
+  pinchAnchorContentY = (midY - panY) / zoom;
 }
 
 function onWheel(e) {
   e.preventDefault();
-  const rect = viewportEl.getBoundingClientRect();
-  const mouseX = e.clientX - rect.left;
-  const mouseY = e.clientY - rect.top;
-  const contentX = (mouseX - panX) / zoom;
-  const contentY = (mouseY - panY) / zoom;
-  // Smaller coefficient + a hard cap per event = gentle, predictable zoom
-  // even on trackpads that send large delta bursts.
-  const rawFactor = Math.exp(-e.deltaY * 0.0080);
-  const factor = Math.max(0.92, Math.min(1.08, rawFactor));
-  const newZoom = Math.min(2.5, Math.max(0.25, zoom * factor));
-  panX = mouseX - contentX * newZoom;
-  panY = mouseY - contentY * newZoom;
-  zoom = newZoom;
+  
+  // Trackpad two-finger swipe has BOTH deltaX and deltaY.
+  // Regular scroll wheel has only deltaY. This is the clearest way to distinguish.
+  if (Math.abs(e.deltaX) > 0) {
+    // Trackpad swipe (horizontal + vertical) — pan the map
+    panX -= e.deltaX;
+    panY -= e.deltaY;
+  } else {
+    // Regular scroll wheel (only vertical) — zoom
+    const rect = viewportEl.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+    const contentX = (mouseX - panX) / zoom;
+    const contentY = (mouseY - panY) / zoom;
+    const rawFactor = Math.exp(-e.deltaY * 0.0008);
+    const factor = Math.max(0.92, Math.min(1.08, rawFactor));
+    const newZoom = Math.min(2.5, Math.max(0.25, zoom * factor));
+    panX = mouseX - contentX * newZoom;
+    panY = mouseY - contentY * newZoom;
+    zoom = newZoom;
+  }
+  
   applyTransform();
   updateZoomIndicator();
   if (selectedNodeId) showNodeToolbar(selectedNodeId);
@@ -541,14 +608,32 @@ function bindGlobalEvents() {
   });
 
   // Canvas interaction
-  viewportEl.addEventListener('mousedown', (e) => {
-    if (e.target === viewportEl || e.target === canvasEl) onBackgroundMouseDown(e);
+  viewportEl.addEventListener('pointerdown', (e) => {
+    if (e.target === viewportEl || e.target === canvasEl) onBackgroundPointerDown(e);
   });
-  canvasEl.addEventListener('dblclick', onBackgroundDblClick);
   viewportEl.addEventListener('wheel', onWheel, { passive: false });
 
-  document.addEventListener('mousemove', (e) => {
-    if (isDraggingNode && dragNodeId) {
+  document.addEventListener('pointermove', (e) => {
+    if (activePointers.has(e.pointerId)) {
+      activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    }
+
+    if (gestureMode === 'pinch' && activePointers.size >= 2) {
+      const [p1, p2] = Array.from(activePointers.values());
+      const dist = Math.hypot(p2.x - p1.x, p2.y - p1.y) || 1;
+      const rect = viewportEl.getBoundingClientRect();
+      const midX = (p1.x + p2.x) / 2 - rect.left;
+      const midY = (p1.y + p2.y) / 2 - rect.top;
+      zoom = Math.min(2.5, Math.max(0.25, pinchStartZoom * (dist / pinchStartDist)));
+      panX = midX - pinchAnchorContentX * zoom;
+      panY = midY - pinchAnchorContentY * zoom;
+      applyTransform();
+      updateZoomIndicator();
+      if (selectedNodeId) showNodeToolbar(selectedNodeId);
+      return;
+    }
+
+    if (gestureMode === 'node' && dragNodeId) {
       const dx = (e.clientX - dragStartX) / zoom;
       const dy = (e.clientY - dragStartY) / zoom;
       const node = nodes.find((n) => n.id === dragNodeId);
@@ -560,7 +645,10 @@ function bindGlobalEvents() {
       el.style.top = node.y + 'px';
       renderEdges();
       if (selectedNodeId === dragNodeId) showNodeToolbar(dragNodeId);
-    } else if (isPanning) {
+      return;
+    }
+
+    if (gestureMode === 'pan') {
       panX = panOrigX + (e.clientX - panStartX);
       panY = panOrigY + (e.clientY - panStartY);
       applyTransform();
@@ -568,17 +656,44 @@ function bindGlobalEvents() {
     }
   });
 
-  document.addEventListener('mouseup', () => {
-    if (isDraggingNode) {
-      isDraggingNode = false;
-      dragNodeId = null;
+  function endPointer(e) {
+    activePointers.delete(e.pointerId);
+
+    if (gestureMode === 'pinch') {
+      if (activePointers.size === 1) {
+        // Lifted one finger but one is still down — keep panning smoothly
+        // from here instead of snapping back to single-pointer mode cold.
+        const remaining = Array.from(activePointers.values())[0];
+        gestureMode = 'pan';
+        panStartX = remaining.x;
+        panStartY = remaining.y;
+        panOrigX = panX;
+        panOrigY = panY;
+      } else if (activePointers.size === 0) {
+        gestureMode = null;
+      }
+      return;
+    }
+
+    if (gestureMode === 'node' && activePointers.size === 0) {
+      const totalDist = Math.hypot(e.clientX - dragStartX, e.clientY - dragStartY);
+      if (totalDist < 8) handleNodeTap(dragNodeId);  // 250ms tap window, 8px distance tolerance
       scheduleSave();
+      gestureMode = null;
+      dragNodeId = null;
+      return;
     }
-    if (isPanning) {
-      isPanning = false;
+
+    if (gestureMode === 'pan' && activePointers.size === 0) {
+      const totalDist = Math.hypot(e.clientX - panStartX, e.clientY - panStartY);
       viewportEl.classList.remove('panning');
+      if (totalDist < 8) handleBackgroundTap(e);  // 250ms tap window, 8px distance tolerance
+      gestureMode = null;
     }
-  });
+  }
+
+  document.addEventListener('pointerup', endPointer);
+  document.addEventListener('pointercancel', endPointer);
 
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
