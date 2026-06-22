@@ -105,7 +105,7 @@ function saveToFile() {
 }
 
 function handleFileOpen(e) {
-  const file = e.target.files;
+  const file = e.target.files[0];
   if (!file) return;
   const reader = new FileReader();
   reader.onload = () => {
@@ -130,16 +130,16 @@ function handleFileOpen(e) {
 
 async function exportImage() {
   try {
-    // Temporarily hide the toolbar if you don't want it in the screenshot
-    const shot = await html2canvas(canvasEl, { 
-      backgroundColor: '#181b24',
-      useCORS: true, // Crucial if loading external fonts or assets
-      width: 6000,   // Match your CANVAS_SIZE
-      height: 6000
-    });
-    
+    const shot = await html2canvas(viewportEl, { backgroundColor: '#181b24' });
     shot.toBlob((blob) => {
-      // ... your existing download trigger code ...
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'mindmap.png';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
     });
   } catch (err) {
     alert('Could not export an image: ' + err.message);
@@ -171,65 +171,38 @@ function updateZoomIndicator() {
 }
 
 function renderAll() {
-  // 1. DOM RECONCILIATION FOR NODES (Reuses existing elements instead of wiping them)
-  const currentIds = new Set(nodes.map(n => n.id));
-
-  // Remove any node elements from the screen if their data was deleted
-  for (const id in nodeElements) {
-    if (!currentIds.has(id)) {
-      nodeElements[id].remove();
-      delete nodeElements[id];
-    }
-  }
-
-  // Create or Update nodes smoothly
-  nodes.forEach(node => {
-    let el = nodeElements[node.id];
-
-    if (!el) {
-      // Create new node element only if it doesn't exist yet
-      el = document.createElement('div');
-      el.className = 'node';
-      el.dataset.id = node.id;
-      
-      const text = document.createElement('div');
-      text.className = 'node-text';
-      text.spellcheck = false;
-
-      const fold = document.createElement('div');
-      fold.className = 'node-fold';
-      
-      el.appendChild(text);
-      el.appendChild(fold);
-      nodesLayerEl.appendChild(el);
-      nodeElements[node.id] = el;
-      
-      // Attach event listeners exactly once on creation
-      attachNodeEvents(el, node, text);
-    }
-
-    // Only update style properties if they actually changed (saves CPU cycles)
-    if (el.style.left !== `${node.x}px`) el.style.left = `${node.x}px`;
-    if (el.style.top !== `${node.y}px`) el.style.top = `${node.y}px`;
-    if (el.style.background !== (node.color || DEFAULT_COLOR)) {
-      el.style.background = node.color || DEFAULT_COLOR;
-    }
-    
-    // Toggle focus/selection visual classes
-    el.classList.toggle('selected', node.id === selectedNodeId);
-    el.classList.toggle('link-source', node.id === linkSourceId);
-
-    // Keep the text content in sync without breaking an active text cursor
-    const textEl = el.querySelector('.node-text');
-    if (textEl && textEl.textContent !== node.text) {
-      textEl.textContent = node.text || '';
-    }
-  });
-
-  // 2. RENDER EDGES (Your original SVG connection lines calculation)
+  nodesLayerEl.innerHTML = '';
+  nodeElements = {};
+  nodes.forEach(renderNode);
   renderEdges();
   applyTransform();
   updateZoomIndicator();
+}
+
+function renderNode(node) {
+  const el = document.createElement('div');
+  el.className = 'node';
+  el.dataset.id = node.id;
+  el.style.left = node.x + 'px';
+  el.style.top = node.y + 'px';
+  el.style.background = node.color || DEFAULT_COLOR;
+
+  const text = document.createElement('div');
+  text.className = 'node-text';
+  text.textContent = node.text || '';
+  text.spellcheck = false;
+
+  const fold = document.createElement('div');
+  fold.className = 'node-fold';
+
+  el.appendChild(text);
+  el.appendChild(fold);
+  nodesLayerEl.appendChild(el);
+  nodeElements[node.id] = el;
+
+  if (node.id === selectedNodeId) el.classList.add('selected');
+
+  attachNodeEvents(el, node, text);
 }
 
 function renderEdges() {
@@ -275,7 +248,8 @@ function renderEdges() {
 function createNode(x, y, text) {
   const node = { id: genId(), x, y, text: text || '', color: DEFAULT_COLOR };
   nodes.push(node);
-  renderAll();
+  renderNode(node);
+  renderEdges();
   scheduleSave();
   return node;
 }
@@ -288,6 +262,23 @@ function deleteNode(id) {
   if (el) el.remove();
   delete nodeElements[id];
   if (selectedNodeId === id) selectNode(null);
+  renderEdges();
+  scheduleSave();
+}
+
+function addEdge(fromId, toId) {
+  if (fromId === toId) return;
+  const exists = edges.some(
+    (e) => (e.from === fromId && e.to === toId) || (e.from === toId && e.to === fromId)
+  );
+  if (exists) return;
+  edges.push({ id: genId(), from: fromId, to: toId });
+  renderEdges();
+  scheduleSave();
+}
+
+function deleteEdge(id) {
+  edges = edges.filter((e) => e.id !== id);
   renderEdges();
   scheduleSave();
 }
@@ -416,6 +407,9 @@ function attachNodeEvents(el, node, textEl) {
   });
 }
 
+// A tap (mouse click or touch tap) that barely moved finishes here. A second
+// one landing on the same note within 250ms counts as a "double" and branches
+// off a new connected note — this is the touch equivalent of double-click.
 function handleNodeTap(nodeId) {
   const now = Date.now();
   if (lastTapTargetId === nodeId && now - lastTapTime < 250) {
@@ -472,6 +466,8 @@ function onBackgroundPointerDown(e) {
   viewportEl.classList.add('panning');
 }
 
+// A tap on empty space that barely moved finishes here. A second one inside
+// 250ms drops a brand-new note right where you tapped.
 function handleBackgroundTap(e) {
   const now = Date.now();
   if (lastTapTargetId === 'background' && now - lastTapTime < 250) {
@@ -487,6 +483,9 @@ function handleBackgroundTap(e) {
   }
 }
 
+// Two pointers down (real multi-touch — a mouse never reports this) means a
+// pinch. We record the starting distance, zoom, and the content point under
+// the midpoint of the two fingers so that point stays fixed as you pinch.
 function startPinch() {
   gestureMode = 'pinch';
   viewportEl.classList.remove('panning');
@@ -503,13 +502,16 @@ function startPinch() {
 function onWheel(e) {
   e.preventDefault();
   
+  // Modern browsers set e.ctrlKey to true for trackpad pinch-to-zoom gestures
   if (e.ctrlKey) {
+    // Zooming (Trackpad pinch-in / pinch-out)
     const rect = viewportEl.getBoundingClientRect();
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
     const contentX = (mouseX - panX) / zoom;
     const contentY = (mouseY - panY) / zoom;
     
+    // Increased the multiplier from 0.0008 to 0.01 for faster, more responsive trackpad zoom
     const rawFactor = Math.exp(-e.deltaY * 0.01);
     const factor = Math.max(0.85, Math.min(1.15, rawFactor));
     const newZoom = Math.min(2.5, Math.max(0.25, zoom * factor));
@@ -518,6 +520,8 @@ function onWheel(e) {
     panY = mouseY - contentY * newZoom;
     zoom = newZoom;
   } else {
+    // Panning (Trackpad two-finger swipe in ANY direction)
+    // Both deltaX and deltaY are handled uniformly here to prevent accidental zooming
     panX -= e.deltaX;
     panY -= e.deltaY;
   }
@@ -568,6 +572,7 @@ function resetView() {
    ============================================================ */
 
 function bindGlobalEvents() {
+  // Top toolbar buttons
   document.getElementById('btn-add').addEventListener('click', () => {
     const rect = viewportEl.getBoundingClientRect();
     const contentX = (rect.width / 2 - panX) / zoom;
@@ -584,6 +589,7 @@ function bindGlobalEvents() {
   document.getElementById('btn-clear').addEventListener('click', clearAll);
   zoomSliderEl.addEventListener('input', () => setZoomFromSlider(Number(zoomSliderEl.value)));
 
+  // Floating per-node toolbar
   nodeToolbarEl.querySelectorAll('.color-dot').forEach((btn) => {
     btn.addEventListener('click', () => {
       if (!selectedNodeId) return;
@@ -604,6 +610,7 @@ function bindGlobalEvents() {
     if (selectedNodeId) deleteNode(selectedNodeId);
   });
 
+  // Canvas interaction
   viewportEl.addEventListener('pointerdown', (e) => {
     if (e.target === viewportEl || e.target === canvasEl) onBackgroundPointerDown(e);
   });
@@ -657,7 +664,9 @@ function bindGlobalEvents() {
 
     if (gestureMode === 'pinch') {
       if (activePointers.size === 1) {
-        const remaining = Array.from(activePointers.values());
+        // Lifted one finger but one is still down — keep panning smoothly
+        // from here instead of snapping back to single-pointer mode cold.
+        const remaining = Array.from(activePointers.values())[0];
         gestureMode = 'pan';
         panStartX = remaining.x;
         panStartY = remaining.y;
@@ -671,7 +680,7 @@ function bindGlobalEvents() {
 
     if (gestureMode === 'node' && activePointers.size === 0) {
       const totalDist = Math.hypot(e.clientX - dragStartX, e.clientY - dragStartY);
-      if (totalDist < 8) handleNodeTap(dragNodeId);
+      if (totalDist < 8) handleNodeTap(dragNodeId);  // 250ms tap window, 8px distance tolerance
       scheduleSave();
       gestureMode = null;
       dragNodeId = null;
@@ -681,7 +690,7 @@ function bindGlobalEvents() {
     if (gestureMode === 'pan' && activePointers.size === 0) {
       const totalDist = Math.hypot(e.clientX - panStartX, e.clientY - panStartY);
       viewportEl.classList.remove('panning');
-      if (totalDist < 8) handleBackgroundTap(e);
+      if (totalDist < 8) handleBackgroundTap(e);  // 250ms tap window, 8px distance tolerance
       gestureMode = null;
     }
   }
